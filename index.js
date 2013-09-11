@@ -1,6 +1,7 @@
 var path = require('path');
 var minimist = require('minimist');
 var wordwrap = require('wordwrap');
+var Q = require('q');
 
 /*  Hack an instance of Argv with process.argv into Argv
     so people can do
@@ -19,7 +20,7 @@ Object.keys(inst).forEach(function (key) {
 
 var exports = module.exports = Argv;
 function Argv (processArgs, cwd) {
-    var self = {};
+    var self = { _defer: Q.defer() };
     if (!cwd) cwd = process.cwd();
     
     self.$0 = process.argv
@@ -113,6 +114,7 @@ function Argv (processArgs, cwd) {
     
     function fail (msg) {
         self.showHelp();
+	if (self._defer) return self._defer.reject(msg);
         if (msg) console.error(msg);
         process.exit(1);
     }
@@ -283,6 +285,14 @@ function Argv (processArgs, cwd) {
         enumerable : true,
     });
     
+    Object.defineProperty(self, 'promise', {
+        get : function () { 
+          setImmediate(function(){ parseArgs(processArgs); });
+	  return self._defer.promise; 
+	},
+        enumerable : true,
+    });
+    
     function parseArgs (args) {
         var argv = minimist(args, options);
         argv.$0 = self.$0;
@@ -291,6 +301,7 @@ function Argv (processArgs, cwd) {
             fail('Not enough non-option arguments: got '
                 + argv._.length + ', need at least ' + demanded._
             );
+	    return;
         }
         
         var missing = [];
@@ -300,20 +311,23 @@ function Argv (processArgs, cwd) {
         
         if (missing.length) {
             fail('Missing required arguments: ' + missing.join(', '));
+	    return;
         }
         
         checks.forEach(function (f) {
             try {
                 if (f(argv) === false) {
                     fail('Argument check failed: ' + f.toString());
+		    return;
                 }
             }
             catch (err) {
                 fail(err)
+		return;
             }
         });
         
-        return argv;
+        if (self._defer) self._defer.resolve(argv);
     }
     
     function longest (xs) {
@@ -325,7 +339,7 @@ function Argv (processArgs, cwd) {
     
     return self;
 };
-
+    
 // rebase an absolute path to a relative one with respect to a base directory
 // exported for tests
 exports.rebase = rebase;
